@@ -1,8 +1,10 @@
 'use strict'
 
-import { app, protocol, BrowserWindow } from 'electron'
+import { app, protocol, BrowserWindow, ipcMain } from 'electron'
+import fs from 'fs'
+import path from 'path'
 import {
-  createProtocol,
+  createProtocol
   /* installVueDevtools */
 } from 'vue-cli-plugin-electron-builder/lib'
 const isDevelopment = process.env.NODE_ENV !== 'production'
@@ -12,13 +14,17 @@ const isDevelopment = process.env.NODE_ENV !== 'production'
 let win
 
 // Scheme must be registered before the app is ready
-protocol.registerSchemesAsPrivileged([{scheme: 'app', privileges: { secure: true, standard: true } }])
+protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { secure: true, standard: true } }])
 
 function createWindow () {
   // Create the browser window.
-  win = new BrowserWindow({ width: 800, height: 600, webPreferences: {
-    nodeIntegration: true
-  } })
+  win = new BrowserWindow({
+    width: 1000,
+    height: 800,
+    webPreferences: {
+      nodeIntegration: true, backgroundThrottling: false
+    }
+  })
 
   if (process.env.WEBPACK_DEV_SERVER_URL) {
     // Load the url of the dev server if in development mode
@@ -71,6 +77,64 @@ app.on('ready', async () => {
 
   }
   createWindow()
+})
+
+const saveFilePath = path.join(app.getPath('userData'), 'data.json')
+const checkSaveFileExists = filePath => {
+  try {
+    fs.openSync(filePath, 'r') // Check file exists or not
+  } catch (err) {
+    const { code } = err
+    // If there is error, means the required file is not present
+    if (code === 'ENOENT') saveFile([])
+  }
+}
+
+const saveFile = data => {
+  return fs.writeFileSync(saveFilePath, JSON.stringify(data))
+}
+
+const getData = () => {
+  let fileData = fs.readFileSync(saveFilePath, 'utf8')
+  if (fileData) fileData = JSON.parse(fileData)
+
+  return fileData
+}
+
+const saveData = usrObj => {
+  if (usrObj) {
+    const prevData = getData()
+
+    let filteredData = []
+    if (prevData) filteredData = prevData.filter(obj => obj.date !== usrObj.date)
+
+    const finalData = [...filteredData, { ...usrObj, isSaved: true }]
+    return saveFile(finalData)
+  }
+
+  return null
+}
+
+// Get specific date data from the file
+ipcMain.on('fetch:data', (event, date = null) => {
+  checkSaveFileExists(saveFilePath)
+  const fileData = getData()
+  let returnVal = null
+
+  if (fileData && fileData.constructor === Array && fileData.length > 0) {
+    const findDateData = fileData.filter(obj => obj.date === date)
+    if (findDateData) returnVal = findDateData
+  }
+
+  win.webContents.send('data:fetched', returnVal)
+})
+
+// Save data int he file
+ipcMain.on('save:data', (event, data) => {
+  checkSaveFileExists(saveFilePath) // Check whether data file is present or not
+  const savedData = saveData(data)
+
+  win.webContents.send('data:saved', savedData) // Return the saved data back to user
 })
 
 // Exit cleanly on request from parent process in development mode.

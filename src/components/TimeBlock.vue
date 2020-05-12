@@ -1,24 +1,24 @@
 <template>
-  <v-card>
-    <v-card-title class="primary white--text">
-      <span class="text-sm-center">{{selectedDate}}</span>
+  <v-card :loading="loadingState" :key="currentDate">
+    <v-card-title>
+      <span>{{currentDate}}</span>
+      <v-spacer></v-spacer>
+      <v-btn text class="success" @click="saveTimeBlocks(false)" :disabled="!userInputFulfilled">Save</v-btn>
     </v-card-title>
     <v-card-text>
-      <!-- Config Row -->
+      <!-- User input block -->
       <v-layout row wrap>
         <v-flex class="grow">
-          <v-select :items="hoursSelectPickerArr" item-text="title" item-value="value" v-model="startingHour" label="Day starts at" class="ma-2" :key="startingHour"></v-select>
+          <v-select :items="hoursSelectPickerArr" item-text="title" item-value="start" label="Day starts at" class="ma-2" v-model="userSelected.startTime" :readonly="userSavedAlready"></v-select>
         </v-flex>
         <v-flex class="grow">
-          <v-select :items="hoursSelectPickerArr" item-text="title" item-value="value"  v-model="endHour" label="Day ends at" class="ma-2" :key="endHour"></v-select>
-        </v-flex>
-        <v-flex class="grow">
-          <v-select :items="intervals" v-model="selectedInterval" label="Interval for blocks" class="ma-2"></v-select>
+          <v-select :items="hoursSelectPickerArr" item-text="title" item-value="start" label="Day ends at" class="ma-2" v-model="userSelected.endTime" :readonly="userSavedAlready"></v-select>
         </v-flex>
       </v-layout>
 
+      <!-- User time block -->
       <v-layout row wrap>
-        <template v-if="!canStartDay">
+        <template v-if="!userInputFulfilled">
           <v-flex xs12>
             <v-alert type='info' :value="true" full-width>
               Please select all the fields above to start
@@ -27,12 +27,12 @@
         </template>
         <template v-else>
           <v-flex xs12>
-            <v-list three-line>
-              <v-list-item v-for="block in timeBlocks" :key="block.startVal">
+            <v-list two-line>
+              <v-list-item v-for="timeBlock in timeBlocks" :key="timeBlock.id">
                 <v-list-item-content>
-                  <v-list-item-title v-text="block.title"></v-list-item-title>
+                  <v-list-item-title v-text="timeBlock.title"></v-list-item-title>
                   <v-list-item-subtitle>
-                    <v-textarea v-model="block.val"></v-textarea>
+                    <v-textarea v-model="timeBlock.val"></v-textarea>
                   </v-list-item-subtitle>
                 </v-list-item-content>
               </v-list-item>
@@ -40,135 +40,190 @@
           </v-flex>
         </template>
       </v-layout>
+      <v-layout row wrap>
+        <v-dialog v-model="showDialog" persistent max-width="60%">
+          <v-card>
+            <v-card-title class="headline">Are you sure to save ?</v-card-title>
+            <v-card-text>
+              <p>Once saved, you can only edit the time block entries. <br></p>
+              <v-alert type="warning">
+                YOU WILL NOT BE ABLE TO CHANGE THE WORKING HOURS, ONCE YOU SAVED THIS DATA.<br>
+                IF UNSURE, PLEASE CANCEL AND THEN TRY AGAIN !
+              </v-alert>
+            </v-card-text>
+            <v-card-actions>
+              <v-spacer></v-spacer>
+              <v-btn color="error darken-1" text @click="showDialog=!showDialog">Disagree</v-btn>
+              <v-btn color="success darken-1" text @click="saveTimeBlocks(true)">Agree</v-btn>
+            </v-card-actions>
+          </v-card>
+        </v-dialog>
+      </v-layout>
     </v-card-text>
   </v-card>
 </template>
-
 <script>
 import { mapGetters } from 'vuex'
+import { v4 as uuidv4 } from 'uuid'
+import { ipcRenderer } from 'electron'
 export default {
   data: () => ({
-    timeBlocks: [],
-    intervals: [5, 10, 15, 30],
-    startingHour: null,
-    endHour: null,
-    selectedInterval: null
+    // User input variables
+    userSelected: {
+      startTime: null,
+      endTime: null,
+      data: null
+    },
+    // Show user warning model
+    showDialog: false,
+    loading: false,
+    storeInterval: null
   }),
   computed: {
-    ...mapGetters([
-      'currentDate'
-    ]),
-
-    // Current formatted date
-    selectedDate () {
-      return this.getFormat(this.currentDate)
+    ...mapGetters({
+      currentDate: 'currentDate', // Current selected date
+      currentDateData: 'currentDateData', // User previous data for current date
+      loadingState: 'loadingState' // Current loading state
+    }),
+    hoursSelectPickerArr () { // Returns the time blocks
+      return this.createTimeRange()
     },
+    userInputFulfilled () {
+      const { startTime, endTime } = this.userSelected
+      if (parseInt(startTime) >= 0 && parseInt(endTime) > 0 && this.currentDate) {
+        this.createTimeBlocks()
+        return true
+      }
 
-    // Hours select picker value
-    hoursSelectPickerArr () {
+      return false
+    },
+    userSavedAlready () { // Checks whether user has already saved data once or not
+      const dtData = this.currentDateData
+      if (dtData && dtData.constructor === Object && Object.keys(dtData).length > 0) {
+        if (Object.keys(dtData).includes('isSaved') && dtData.isSaved === true) return true
+      }
+
+      return false
+    },
+    timeBlocks: { // Returns the time blocks based on user input
+      get () {
+        return this.userSelected.data
+      },
+      set (val) {
+        this.userSelected.data = val
+      }
+    }
+  },
+  methods: {
+    // Check for initial data
+    checkForInitialData () {
+      this.userSelected.startTime = null
+      this.userSelected.endTime = null
+      this.userSelected.data = null
+
+      if (this.currentDateData) {
+        const { time } = this.currentDateData
+        if (time) {
+          this.userSelected.startTime = time.start
+          this.userSelected.endTime = time.end
+
+          if (this.storeInterval) {
+            clearInterval(this.storeInterval) // Clear the data check interval
+          }
+        }
+      }
+    },
+    // Create time range blocks depending upon inputs
+    createTimeRange (startHour = 0, endHour = 23) {
       let startTime = new Date()
-      startTime.setHours(0, 0, 0, 0)
+      startTime.setHours(startHour, 0, 0, 0)
 
       const endTime = new Date()
-      endTime.setHours(23, 59, 59, 999)
+      endTime.setHours(endHour, 59, 59, 999)
 
       const returnArr = []
       while (startTime.getTime() < endTime.getTime()) {
         const endBlock = new Date()
         endBlock.setHours(startTime.getHours() + 1, startTime.getMinutes(), startTime.getSeconds(), startTime.getMilliseconds())
 
-        returnArr.push({ title: endBlock.toLocaleTimeString(), value: endBlock.getHours() })
+        returnArr.push({ title: startTime.toLocaleTimeString(), value: endBlock.getHours(), start: startTime.getHours(), end: endBlock.getHours() })
         startTime = endBlock
       }
 
       return returnArr
     },
+    // Create time block for user inputs
+    createTimeBlocks () {
+      const returnArr = []
+      const { startTime, endTime } = this.userSelected
+      const timeRange = this.createTimeRange(startTime, endTime)
 
-    // Check if all the values are present to star a day
-    canStartDay () {
-      if (this.startingHour && this.endHour && this.selectedInterval) {
-        this.createTimeBlocks()
-        return true
+      if (timeRange && timeRange.constructor === Array && timeRange.length > 0) {
+        timeRange.forEach(timeItem => {
+          const { start: startBlockHour, end: endBlockHour } = timeItem
+
+          const startBlock = new Date(this.currentDate)
+          const endBlock = new Date(this.currentDate)
+
+          startBlock.setHours(startBlockHour, 0)
+          endBlock.setHours(endBlockHour, 0)
+
+          // Get data, if any exists for current time block
+          const timeBlockData = this.getTimeBlockData(startBlockHour, endBlockHour)
+          if (timeBlockData) {}
+
+          returnArr.push({
+            id: uuidv4(),
+            val: null,
+            title: `${startBlock.toLocaleTimeString()} - ${endBlock.toLocaleTimeString()}`,
+            startVal: startBlock.getHours(),
+            endVal: endBlock.getHours(),
+            interval: null
+          })
+        })
       }
-      return false
-    }
-  },
-  methods: {
-    // Create format from provided date
-    getFormat (dateString = null, formatArr = []) {
-      if (!formatArr || formatArr.length === 0) formatArr = ['m', '/', 'd', '/', 'Y']
 
-      const returnArr = []
-      const dateFormats = this.getFormatsFromDateObj(new Date(dateString))
-      formatArr.forEach(format => {
-        const formatValObj = dateFormats.find(obj => obj.format === format)
-        if (formatValObj) returnArr.push(formatValObj.val)
-        else returnArr.push(format)
-      })
-
-      return returnArr.join('')
+      this.userSelected.data = returnArr
     },
-
-    // Get date values for constant date format variables
-    getFormatsFromDateObj (dateObj = null) {
+    // Returns any previously saved data for provided time block
+    getTimeBlockData (startTime, endTime) {
       const returnArr = []
-      const formatArr = [
-        { format: 'y', method: 'getFullYear', val: null },
-        { format: 'm', method: 'getMonth', val: null },
-        { format: 'd', method: 'getDate', val: null },
-        { format: 'Y', method: 'getFullYear', val: null },
-        { format: 'M', method: 'getMonth', val: null },
-        { format: 'D', method: 'getDate', val: null }
-      ]
-
-      formatArr.forEach(formatObj => {
-        const { format, method } = formatObj
-        const dateVal = dateObj[method]()
-
-        returnArr.push({ format, val: dateVal })
-      })
+      const userData = this.currentDateData
+      if (userData && userData !== 'undefined') {}
 
       return returnArr
     },
-
-    // Create time slots based on the provided configurations
-    createTimeBlocks () {
-      this.timeBlocks = [] // Reset time blocks
-
-      // Validate values
-      if (this.startingHour > this.endHour || this.endHour < this.startingHour) {
-        this.endHour = null
-        this.endHour = this.startingHour + 1
+    // Save time block data
+    saveTimeBlocks (usrConfirmed = false) {
+      const finalData = {
+        date: this.currentDate,
+        data: this.userSelected.data,
+        time: {
+          start: this.userSelected.startTime,
+          end: this.userSelected.endTime
+        },
+        isSaved: false
       }
 
-      console.log(this.startingHour, this.endHour)
-
-      // Set the starting & end limits
-      let start = new Date()
-      start.setHours(this.startingHour, 0, 0, 0)
-
-      const end = new Date()
-      end.setHours(this.endHour, 59, 59, 999)
-
-      while (start.getTime() <= end.getTime()) {
-        // Create time interval blocks
-        const endBlock = new Date()
-        endBlock.setHours(start.getHours() + 1, start.getMinutes(), start.getSeconds(), start.getMilliseconds())
-        const blockId = `${start.getTime()}_${endBlock.getTime()}`
-
-        while (start.getTime() < endBlock.getTime()) {
-          const intervalDate = new Date()
-          intervalDate.setHours(start.getHours(), start.getMinutes() + this.selectedInterval, start.getSeconds(), start.getMilliseconds())
-          this.timeBlocks.push({ blockId, startVal: start.getTime(), endVal: intervalDate.getTime(), title: `${start.toLocaleTimeString()} - ${intervalDate.toLocaleTimeString()}`, val: null })
-
-          start = intervalDate
-        }
-        start = endBlock
+      if (!this.userSavedAlready && !usrConfirmed) {
+        this.showDialog = true // Ask user before saving
+        return false
+      } else {
+        this.showDialog = false
+        return this.triggerSaveRequest(finalData) // ELse save data
       }
+    },
+    // Trigger save request
+    triggerSaveRequest (saveData = null) {
+      this.$store.dispatch('saveUserData', saveData) // Send the request to save the data
     }
   },
   mounted () {
-    // this.createTimeBlocks()
+    this.checkForInitialData() // Check for initial data
+    // Server saved the data
+    ipcRenderer.on('data:fetched', (event, date) => {
+      this.storeInterval = setTimeout(() => this.checkForInitialData(date), 500) // Check for initial data
+    })
   }
 }
 </script>

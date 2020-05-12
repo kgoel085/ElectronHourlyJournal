@@ -25,8 +25,12 @@ export default {
       },
       set (val) {
         this.$store.commit('setCurrentDate', val)
+        this.$store.dispatch('fetchUserData', val)
       }
     }
+  },
+  mounted () {
+    // if (this.currentDate) this.$store.dispatch('fetchUserData', this.currentDate)
   }
 }
 </script>

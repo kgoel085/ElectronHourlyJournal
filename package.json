@@ -16,6 +16,7 @@
     "@mdi/font": "^3.6.95",
     "core-js": "^3.6.4",
     "roboto-fontface": "*",
+    "uuid": "^8.0.0",
     "vue": "^2.6.11",
     "vue-router": "^3.1.6",
     "vuetify": "^2.2.11",
