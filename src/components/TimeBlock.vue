@@ -122,6 +122,7 @@ export default {
       this.userSelected.data = null
 
       if (this.currentDateData) {
+        this.$store.commit('setLoadingDataState', false)
         const { time } = this.currentDateData
         if (time) {
           this.userSelected.startTime = time.start
@@ -131,6 +132,9 @@ export default {
             clearInterval(this.storeInterval) // Clear the data check interval
           }
         }
+      } else {
+        this.$store.commit('setLoadingDataState', true)
+        this.$store.dispatch('fetchUserData', this.currentDate) // Else fetch data
       }
     },
     // Create time range blocks depending upon inputs
@@ -169,12 +173,12 @@ export default {
           endBlock.setHours(endBlockHour, 0)
 
           // Get data, if any exists for current time block
-          const timeBlockData = this.getTimeBlockData(startBlockHour, endBlockHour)
-          if (timeBlockData) {}
+          const savedValues = this.getTimeBlockData(startBlockHour, endBlockHour)
+          const blockValue = savedValues || null
 
           returnArr.push({
             id: uuidv4(),
-            val: null,
+            val: blockValue,
             title: `${startBlock.toLocaleTimeString()} - ${endBlock.toLocaleTimeString()}`,
             startVal: startBlock.getHours(),
             endVal: endBlock.getHours(),
@@ -187,11 +191,26 @@ export default {
     },
     // Returns any previously saved data for provided time block
     getTimeBlockData (startTime, endTime) {
-      const returnArr = []
       const userData = this.currentDateData
-      if (userData && userData !== 'undefined') {}
+      if (userData && userData !== 'undefined') {
+        const filteredData = userData.data.filter(obj => obj.startVal >= parseInt(startTime) && obj.endVal <= parseInt(endTime))
 
-      return returnArr
+        // Store the saved values
+        const savedValues = []
+        if (filteredData && filteredData.length > 0) {
+          filteredData.forEach(obj => {
+            const { val } = obj
+            if (val && typeof val === 'string' && val.length > 0) savedValues.push(val)
+          })
+        }
+
+        if (savedValues.length > 0) {
+          const uniqueVals = [...new Set(savedValues)]
+          return uniqueVals.join('\n')
+        }
+      }
+
+      return null
     },
     // Save time block data
     saveTimeBlocks (usrConfirmed = false) {
